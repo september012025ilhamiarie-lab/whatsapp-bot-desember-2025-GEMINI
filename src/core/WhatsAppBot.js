@@ -21,7 +21,7 @@ class WhatsAppBot {
     setupEvents() {
         this.client.on('qr', this.handleQr);
         this.client.on('ready', this.handleReady.bind(this));
-        this.client.on('auth_failure', this.handleAuthFailure.bind(this)); // Penanganan Sesi Gagal
+        this.client.on('auth_failure', this.handleAuthFailure.bind(this)); 
         
         this.client.on('message', (msg) => handleMessage(this.client, msg));
         this.client.on('call', (call) => handleCall(this.client, call));
@@ -31,12 +31,12 @@ class WhatsAppBot {
 
     // --- Handlers Sesi ---
     handleQr(qr) {
+        console.log('MOHON SCAN QR-CODE UNTUK MENAUTKAN WHATSAPP:');
         qrcode.generate(qr, { small: true });
     }
 
     handleReady() {
         console.log("READY — connected to WhatsApp.");
-        // Jalankan pembersihan cooldown lama dan loop kehadiran
         this.cleanOldCooldowns(); 
         autoPresenceLoop(this.client).catch(e => console.error('autoPresenceLoop crashed:', e.message));
     }
@@ -63,7 +63,7 @@ class WhatsAppBot {
         }
         
         setTimeout(() => {
-            process.exit(1); // PM2 akan me-restart
+            process.exit(1); 
         }, 3000);
     }
 
@@ -82,7 +82,7 @@ class WhatsAppBot {
         
         if (cleanedCount > 0) {
             saveCooldowns(config.USER_COOLDOWNS);
-            console.log(`Pembersihan Cooldown selesai. Dihapus: ${cleanedCount} entri.`);
+            console.log(`[Disk] Pembersihan Cooldown selesai. Dihapus: ${cleanedCount} entri.`);
         }
     }
 

@@ -1,6 +1,5 @@
 // src/utils/contactResolver.js
 async function resolveContact(client, wid_from) {
-    // ... [Isi fungsi resolveContact yang sudah ada] ...
     let wid = wid_from;
     const isLid = wid_from && (wid_from.includes("@lid") || wid_from.includes("@s.whatsapp.net"));
 
@@ -32,5 +31,4 @@ async function resolveContact(client, wid_from) {
     }
     return contact;
 }
-
 module.exports = resolveContact;

@@ -6,15 +6,8 @@ async function autoPresenceLoop(client) {
     while (true) {
         try {
             const rand = Math.random();
-            // 40% chance: Set status Available (Online)
-            if (rand < 0.4) {
-                try { await client.sendPresenceAvailable(); } catch {}
-            }
-            // 30% chance: Set status Unavailable (Offline)
-            else if (rand < 0.7) {
-                try { await client.sendPresenceUnavailable(); } catch {}
-            }
-            // 30% chance: Simulate typing in a random chat
+            if (rand < 0.4) { try { await client.sendPresenceAvailable(); } catch {} }
+            else if (rand < 0.7) { try { await client.sendPresenceUnavailable(); } catch {} }
             else {
                 try {
                     const chats = await client.getChats();
@@ -28,13 +21,11 @@ async function autoPresenceLoop(client) {
                     }
                 } catch (e) {}
             }
-            // Tunggu jeda panjang sebelum loop berikutnya
-            await humanDelay(6000, 22000); // 6 detik hingga 22 detik jeda
+            await humanDelay(6000, 22000); 
         } catch (err) {
             console.error("autoPresenceLoop error:", err.message);
-            await sleep(5000); // Tunggu 5 detik jika ada error fatal
+            await sleep(5000);
         }
     }
 }
-
 module.exports = autoPresenceLoop;

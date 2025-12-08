@@ -12,9 +12,10 @@ module.exports = async function (client, call) {
         const senderId = call.from;
         const currentTime = Date.now();
         
+        // Cooldown Check
         const lastTime = config.USER_COOLDOWNS.get(senderId);
         const COOLDOWN_MS = config.COOLDOWN_IN_MINUTES * 60 * 1000;
-        if (lastTime && (currentTime - lastTime) < COOLDOWN_MS) return; // Cooldown aktif, jangan balas call
+        if (lastTime && (currentTime - lastTime) < COOLDOWN_MS) return; 
         
         const resolved = await resolveContact(client, call.from);
         const push = resolved.pushname || resolved.name || resolved.number;
@@ -25,7 +26,7 @@ module.exports = async function (client, call) {
             "), WhatsApp ini tidak bisa menerima call/video call ya. Hanya chat saja 🙏";
 
         config.USER_COOLDOWNS.set(senderId, currentTime); // Reset Cooldown
-        saveCooldowns(config.USER_COOLDOWNS);
+        saveCooldowns(config.USER_COOLDOWNS); // Save (Debounced)
         
         await humanDelay(1500, 4200);
         await simulateTyping(client, resolved.id._serialized, callReply, Math.min(3000, callReply.length * 40));

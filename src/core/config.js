@@ -4,7 +4,9 @@ const { loadCooldowns } = require('../utils/humanHelpers');
 module.exports = {
     REJECT_CALLS: process.env.BOT_REJECT_CALLS === 'true',
     COOLDOWN_IN_MINUTES: parseInt(process.env.BOT_COOLDOWN_MINUTES) || 60,
-    USER_COOLDOWNS: loadCooldowns(), // Dimuat dari file saat startup
+    
+    // Dimuat dari file saat startup
+    USER_COOLDOWNS: loadCooldowns(), 
     
     PUPPETEER_CONFIG: {
         headless: process.env.PUPPETEER_HEADLESS === 'true',
