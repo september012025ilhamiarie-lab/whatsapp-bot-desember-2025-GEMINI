@@ -2,85 +2,112 @@
 const fs = require('fs');
 const path = require('path');
 
-const COOLDOWN_FILE_PATH = path.join('data', 'cooldowns.json'); 
-if (!fs.existsSync('data')) {
-    fs.mkdirSync('data');
+const COOLDOWN_FILE_PATH = path.join('data', 'cooldowns.json');
+if (!fs.existsSync('data')) fs.mkdirSync('data');
+
+// ─────────────────────────────────────────────
+// BASIC TIME UTILS
+// ─────────────────────────────────────────────
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// --- DEBOUNCE CONFIG ---
-let cooldownTimer = null;
-const DEBOUNCE_DELAY_MS = 5000; // Simpan ke disk hanya setiap 5 detik
+function jitter(min = 200, max = 600) {
+    return Math.floor(Math.random() * (max - min + 1) + min);
+}
 
-// --- FUNGSI WAKTU DASAR & ANTI-DETEKSI ---
+function humanDelay(min = 700, max = 2200) {
+    const hr = new Date().getHours();
 
-function nowHour() { return new Date().getHours(); }
-function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
-function jitter(min = 200, max = 600) { return Math.floor(Math.random() * (max - min + 1) + min); }
-
-async function humanDelay(min = 700, max = 2400) {
-    const hour = nowHour();
-    if (hour >= 0 && hour <= 6) { min *= 2; max *= 2; }
-    if ((hour >= 7 && hour <= 10) || (hour >= 17 && hour <= 20)) {
-        min = Math.floor(min * 0.65); max = Math.floor(max * 0.85);
+    // malam → respons lebih lambat
+    if (hr >= 0 && hr <= 6) {
+        min *= 1.3; 
+        max *= 1.4;
     }
-    const delay = Math.floor(Math.random() * (max - min + 1) + min);
-    await sleep(delay);
+
+    // jam sibuk → respons sedikit cepat
+    if ((hr >= 7 && hr <= 10) || (hr >= 17 && hr <= 20)) {
+        min *= 0.8; 
+        max *= 0.9;
+    }
+
+    const d = jitter(min, max);
+    return sleep(d);
 }
 
-async function simulateTyping(client, chatId, text = "", totalDuration = 1400) {
+// ─────────────────────────────────────────────
+// REALISTIC TYPING SIMULATION – SAFE FOR 2025
+// ─────────────────────────────────────────────
+
+async function simulateTyping(client, chatId, text = "", duration = 1400) {
     try {
-        await client.sendPresenceAvailable();
-        await client.sendPresenceUpdate("composing", chatId);
-        const length = text.length || 10;
-        const perChar = Math.max(20, Math.floor(totalDuration / length));
-        for (let i = 0; i < length; i++) {
-            await sleep(Math.floor(perChar * (0.55 + Math.random() * 0.9)));
+        // 💡 30% waktu: tidak typing sama sekali (lebih manusiawi)
+        if (Math.random() < 0.30) return;
+
+        // 💡 Online indicator: bukan selalu available
+        if (Math.random() < 0.60) {
+            try { await client.sendPresenceAvailable(); } catch {}
         }
+
+        // Start typing
+        await client.sendPresenceUpdate("composing", chatId);
+
+        // Durasi typing tidak dihitung per karakter, tetapi random
+        const minT = duration * 0.7;
+        const maxT = duration * 1.3;
+        const typingTime = jitter(minT, maxT);
+
+        await sleep(typingTime);
+
+        // Pause typing
         await client.sendPresenceUpdate("paused", chatId);
-        return true;
-    } catch (e) {
+
+    } catch (err) {
+        // fail-safe
         try { await client.sendPresenceUpdate("paused", chatId); } catch {}
-        return false;
     }
 }
 
-// --- FUNGSI PERSISTENSI COOLDOWN (DEBOUNCED) ---
+// ─────────────────────────────────────────────
+// PERSISTENT COOLDOWN (ONLY USER COOLDOWN!)
+// ─────────────────────────────────────────────
+
+let cooldownTimer = null;
+const DEBOUNCE = 5000;
 
 function loadCooldowns() {
-    if (!fs.existsSync(COOLDOWN_FILE_PATH)) return new Map();
     try {
-        const data = fs.readFileSync(COOLDOWN_FILE_PATH, 'utf8');
+        if (!fs.existsSync(COOLDOWN_FILE_PATH)) return new Map();
+        const data = fs.readFileSync(COOLDOWN_FILE_PATH, "utf8");
         const obj = JSON.parse(data);
         return new Map(Object.entries(obj));
-    } catch (error) {
-        console.error("Error loading cooldowns:", error.message);
+    } catch {
         return new Map();
     }
 }
 
-function _writeCooldownsToDisk(cooldowns) {
-    const obj = Object.fromEntries(cooldowns);
+function writeCooldowns(cool) {
     try {
-        fs.writeFileSync(COOLDOWN_FILE_PATH, JSON.stringify(obj, null, 2), 'utf8');
-        console.log(`[Disk] Cooldowns berhasil disimpan.`);
-    } catch (error) {
-        console.error("Error saving cooldowns:", error.message);
+        const obj = Object.fromEntries(cool);
+        fs.writeFileSync(COOLDOWN_FILE_PATH, JSON.stringify(obj, null, 2));
+    } catch (e) {
+        console.error("Cooldown save error:", e.message);
     }
 }
 
-function saveCooldownsDebounced(cooldowns) {
-    if (cooldownTimer) {
-        clearTimeout(cooldownTimer);
-    }
-    
+function saveCooldowns(cool) {
+    if (cooldownTimer) clearTimeout(cooldownTimer);
     cooldownTimer = setTimeout(() => {
-        _writeCooldownsToDisk(cooldowns);
+        writeCooldowns(cool);
         cooldownTimer = null;
-    }, DEBOUNCE_DELAY_MS);
+    }, DEBOUNCE);
 }
 
 module.exports = {
-    sleep, humanDelay, jitter, simulateTyping,
+    sleep,
+    jitter,
+    humanDelay,
+    simulateTyping,
     loadCooldowns,
-    saveCooldowns: saveCooldownsDebounced, 
+    saveCooldowns
 };

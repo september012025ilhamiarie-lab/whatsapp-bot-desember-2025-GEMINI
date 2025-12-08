@@ -1,31 +1,53 @@
 // src/utils/presenceLoop.js
-const { humanDelay, jitter, sleep } = require('./humanHelpers');
+const { humanDelay, sleep, jitter } = require('./humanHelpers');
 
 async function autoPresenceLoop(client) {
-    console.log("Starting Auto Presence Loop...");
+    console.log("Starting Safe Presence Loop...");
+    
     while (true) {
         try {
-            const rand = Math.random();
-            if (rand < 0.4) { try { await client.sendPresenceAvailable(); } catch {} }
-            else if (rand < 0.7) { try { await client.sendPresenceUnavailable(); } catch {} }
-            else {
+            // 1. Random chance to appear online (20%)
+            if (Math.random() < 0.20) {
                 try {
-                    const chats = await client.getChats();
-                    if (chats && chats.length) {
-                        const sample = chats[Math.floor(Math.random() * chats.length)];
-                        if (sample && sample.id && sample.id._serialized) {
-                            await client.sendPresenceUpdate("composing", sample.id._serialized);
-                            await sleep(jitter(500, 2000));
-                            await client.sendPresenceUpdate("paused", sample.id._serialized);
-                        }
-                    }
-                } catch (e) {}
+                    await client.sendPresenceAvailable();
+                } catch {}
             }
-            await humanDelay(6000, 22000); 
+            
+            // 2. Random chance to appear offline (40%)
+            else if (Math.random() < 0.60) {
+                try {
+                    await client.sendPresenceUnavailable();
+                } catch {}
+            }
+
+            // 3. Very rare composing event (only 5%)
+            else if (Math.random() < 0.05) {
+                try {
+                    // Pick a recent chat instead of random chat
+                    const chats = await client.getChats();
+                    const recent = chats
+                        .filter(c => !c.isGroup && !c.isMuted)
+                        .slice(0, 5); // only latest chats
+
+                    if (recent.length > 0) {
+                        const pick = recent[Math.floor(Math.random() * recent.length)];
+
+                        await client.sendPresenceUpdate("composing", pick.id._serialized);
+                        await sleep(jitter(500, 1500));
+                        await client.sendPresenceUpdate("paused", pick.id._serialized);
+                    }
+                } catch {}
+            }
+
+            // 4. Large idle interval (human-like)
+            const idle = jitter(90000, 280000); // 1.5 — 4.5 minutes
+            await sleep(idle);
+
         } catch (err) {
-            console.error("autoPresenceLoop error:", err.message);
-            await sleep(5000);
+            console.error("presenceLoop error:", err.message);
+            await sleep(10000);
         }
     }
 }
+
 module.exports = autoPresenceLoop;

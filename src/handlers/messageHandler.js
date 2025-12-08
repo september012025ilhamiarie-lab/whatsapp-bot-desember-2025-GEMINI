@@ -1,51 +1,95 @@
 // src/handlers/messageHandler.js
 const resolveContact = require('../utils/contactResolver');
-const { humanDelay, simulateTyping, saveCooldowns } = require('../utils/humanHelpers');
-const config = require('../core/config');
+const { humanDelay, simulateTyping } = require('../utils/humanHelpers');
+
+// Runtime-only cooldown & locks
+const messageCooldown = new Map();
+const typingLocks = new Map();
 
 module.exports = async function (client, msg) {
     try {
+        // ─────────────────────────────────────────────
+        // 1. Basic Filter (anti-banned)
+        // ─────────────────────────────────────────────
         if (!msg || !msg.from || msg.fromMe) return;
-        const senderId = msg.from;
-        
-        // 1. Cooldown Check & Filter Pesan Kosong
-        const lastTime = config.USER_COOLDOWNS.get(senderId);
-        const currentTime = Date.now();
-        const COOLDOWN_MS = config.COOLDOWN_IN_MINUTES * 60 * 1000;
-        
-        if (lastTime && (currentTime - lastTime) < COOLDOWN_MS) return;
-        if (msg.body === null || msg.body.trim() === '') return; 
-        
-        // 2. Human Delay & Auto-read
-        await humanDelay(800, 3000);
+        if (msg.isStatus) return;
+        if (msg.from.endsWith("@g.us")) return;
+        if (!msg.body || !msg.body.trim()) return;
+
+        const sender = msg.from;
+        const text = msg.body.trim();
+        const now = Date.now();
+
+        // ─────────────────────────────────────────────
+        // 2. Anti-Spam Cooldown (1.5 – 3 detik)
+        // ─────────────────────────────────────────────
+        const last = messageCooldown.get(sender);
+        const COOLDOWN = 1500 + Math.floor(Math.random() * 1500);
+
+        if (last && now - last < COOLDOWN) return;
+        messageCooldown.set(sender, now);
+
+        // ─────────────────────────────────────────────
+        // 3. Human-like read behavior (tidak selalu read)
+        // ─────────────────────────────────────────────
         try {
             const chat = await msg.getChat();
-            const readDelay = Math.min(6000, Math.max(800, msg.body ? msg.body.length * 40 : 900));
-            await humanDelay(readDelay * 0.6, readDelay * 1.1);
-            await chat.sendSeen();
-        } catch {}
 
-        // 3. Filter Grup/Broadcast
-        if (msg.from.endsWith('@broadcast') || msg.from.endsWith('@g.us') || msg.type !== 'chat') return;
+            // 50% chance read
+            if (Math.random() < 0.50) {
+                const readDelay = Math.min(3000, Math.max(800, text.length * 35));
+                await humanDelay(readDelay * 0.5, readDelay);
+                await chat.sendSeen();
+            }
+        } catch (e) {
+            console.warn("read error:", e.message);
+        }
 
-        // 4. Resolve Contact & Build Reply
-        const resolved = await resolveContact(client, msg.from);
-        const push = resolved.pushname || resolved.name || resolved.number;
-        const replyText = "Halo @" + resolved.number + " (" + push + "), pesan ini dikirim menggunakan bot!, abaikan";
-        
-        // 5. Update Cooldown dan SIMPAN (DEBOUNCED)
-        config.USER_COOLDOWNS.set(senderId, currentTime);
-        saveCooldowns(config.USER_COOLDOWNS); 
+        // ─────────────────────────────────────────────
+        // 4. Resolve Contact (LID → c.us)
+        // ─────────────────────────────────────────────
+        const resolved = await resolveContact(client, sender);
+        if (!resolved) return;
 
-        // 6. Typing simulation & Send
-        await humanDelay(1100, 3200);
-        const baseTyping = Math.min(3500, Math.max(900, replyText.length * 40));
-        await simulateTyping(client, resolved.id._serialized, replyText, baseTyping);
+        const jid = resolved.id?._serialized;     // selalu @c.us
+        const number = resolved.number;           // 628xxxx
+        const pushname = resolved.pushname || resolved.name || number;
 
-        await humanDelay(400, 1200);
-        await client.sendMessage(resolved.id._serialized, replyText);
+        // ─────────────────────────────────────────────
+        // 5. Build reply
+        // ─────────────────────────────────────────────
+        const reply =
+            `Halo @${number} (${pushname}), pesan kamu sudah diterima 😊\n` +
+            `Ini balasan otomatis dari bot.`;
+
+        // ─────────────────────────────────────────────
+        // 6. Typing Lock (anti flood)
+        // ─────────────────────────────────────────────
+        if (typingLocks.get(jid)) return;
+        typingLocks.set(jid, true);
+
+        try {
+            // ─────────────────────────────────────────
+            // 7. Human-like typing simulation
+            // ─────────────────────────────────────────
+            await humanDelay(700, 1800);
+            const typingTime = Math.min(2600, Math.max(900, reply.length * 28));
+            await simulateTyping(client, jid, reply, typingTime);
+
+            await humanDelay(250, 750);
+
+            // ─────────────────────────────────────────
+            // 8. Send reply (mentions MUST use Contact)
+            // ─────────────────────────────────────────
+            await client.sendMessage(jid, reply, {
+                mentions: [resolved]    // FIX MENTIONS
+            });
+
+        } finally {
+            typingLocks.delete(jid);
+        }
 
     } catch (err) {
-        console.error("message handler error:", err.message);
+        console.error("message handler error:", err);
     }
 };

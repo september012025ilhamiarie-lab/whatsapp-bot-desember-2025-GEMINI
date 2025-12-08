@@ -1,88 +1,128 @@
 // src/core/WhatsAppBot.js
 const { Client, LocalAuth } = require("whatsapp-web.js");
-const qrcode = require('qrcode-terminal');
-const fs = require('fs');
-const path = require('path');
+const qrcode = require("qrcode-terminal");
+const fs = require("fs");
+const path = require("path");
 
-const config = require('./config');
-const { saveCooldowns } = require('../utils/humanHelpers'); 
-const autoPresenceLoop = require('../utils/presenceLoop');
-const handleMessage = require('../handlers/messageHandler');
-const handleCall = require('../handlers/callHandler');
+const config = require("./config");
+const { saveCooldowns } = require("../utils/humanHelpers");
+const autoPresenceLoop = require("../utils/presenceLoop");
+const handleMessage = require("../handlers/messageHandler");
+const handleCall = require("../handlers/callHandler");
 
 class WhatsAppBot {
     constructor() {
+        this.presenceStarted = false;
+
         this.client = new Client({
             authStrategy: new LocalAuth(),
             puppeteer: config.PUPPETEER_CONFIG,
+
+            // Added for WA stability
+            restartOnAuthFail: true,
+            takeoverOnConflict: true,
+            takeoverTimeoutMs: 3000,
         });
     }
 
     setupEvents() {
-        this.client.on('qr', this.handleQr);
-        this.client.on('ready', this.handleReady.bind(this));
-        this.client.on('auth_failure', this.handleAuthFailure.bind(this)); 
-        
-        this.client.on('message', (msg) => handleMessage(this.client, msg));
-        this.client.on('call', (call) => handleCall(this.client, call));
-        
-        this.client.on('disconnected', this.handleDisconnect);
+        // QR Code
+        this.client.on("qr", this.handleQr);
+
+        // Basic session
+        this.client.on("ready", this.handleReady.bind(this));
+        this.client.on("auth_failure", this.handleAuthFailure.bind(this));
+        this.client.on("disconnected", this.handleDisconnect.bind(this));
+
+        // Incoming actions
+        this.client.on("message", (msg) => handleMessage(this.client, msg));
+
+        //🔥 New WA API for call events
+        this.client.on("incoming_call", (call) => handleCall(this.client, call));
     }
 
-    // --- Handlers Sesi ---
+    //───────────────────────────────────────────
+    // QR HANDLER
+    //───────────────────────────────────────────
     handleQr(qr) {
-        console.log('MOHON SCAN QR-CODE UNTUK MENAUTKAN WHATSAPP:');
+        console.log("SCAN QR UNTUK LOGIN WHATSAPP:");
         qrcode.generate(qr, { small: true });
     }
 
+    //───────────────────────────────────────────
+    // READY HANDLER
+    //───────────────────────────────────────────
     handleReady() {
-        console.log("READY — connected to WhatsApp.");
-        this.cleanOldCooldowns(); 
-        autoPresenceLoop(this.client).catch(e => console.error('autoPresenceLoop crashed:', e.message));
-    }
-    
-    handleDisconnect(reason) {
-        console.log('WHATSAPP WEB CLIENT SUDAH LOG-OUT', reason);
-    }
-    
-    handleAuthFailure(reason) {
-        console.error('🚨 AUTENTIKASI GAGAL! Sesi rusak. Alasan:', reason);
-        const authDir = path.join(process.cwd(), '.wwebjs_auth');
-        const profileDir = path.join(process.cwd(), 'chrome_profile');
-        
-        try {
-            if (fs.existsSync(authDir)) {
-                fs.rmSync(authDir, { recursive: true, force: true });
-            }
-            if (fs.existsSync(profileDir)) {
-                 fs.rmSync(profileDir, { recursive: true, force: true });
-            }
-            console.log('Folder sesi dihapus. Memaksa restart agar PM2 membuat QR baru.');
-        } catch (e) {
-            console.error('Gagal menghapus folder sesi:', e.message);
+        console.log("READY — sukses tersambung ke WhatsApp.");
+
+        this.cleanOldCooldowns();
+
+        // 🔥 Prevent multiple presence loop
+        if (!this.presenceStarted) {
+            this.presenceStarted = true;
+
+            autoPresenceLoop(this.client).catch((e) =>
+                console.error("autoPresenceLoop crashed:", e)
+            );
         }
-        
+    }
+
+    //───────────────────────────────────────────
+    // HANDLE DISCONNECT
+    //───────────────────────────────────────────
+    handleDisconnect(reason) {
+        console.log("⚠️ WhatsApp DISCONNECTED:", reason);
+
+        // WA sometimes reconnects itself automatically
+        // Wait 3 seconds, then attempt re-init
         setTimeout(() => {
-            process.exit(1); 
+            console.log("Mencoba reconnect WhatsApp...");
+            this.client.initialize();
         }, 3000);
     }
 
-    // --- Utility Internal ---
+    //───────────────────────────────────────────
+    // HANDLE AUTH FAILURE
+    //───────────────────────────────────────────
+    handleAuthFailure(reason) {
+        console.error("🚨 AUTENTIKASI GAGAL:", reason);
+
+        const authDir = path.join(process.cwd(), ".wwebjs_auth");
+        const profileDir = path.join(process.cwd(), "chrome_profile");
+
+        try {
+            if (fs.existsSync(authDir))
+                fs.rmSync(authDir, { recursive: true, force: true });
+
+            if (fs.existsSync(profileDir))
+                fs.rmSync(profileDir, { recursive: true, force: true });
+
+            console.log("Folder sesi dihapus. Restart agar login ulang.");
+        } catch (err) {
+            console.error("Gagal hapus folder sesi:", err);
+        }
+
+        setTimeout(() => process.exit(1), 2000);
+    }
+
+    //───────────────────────────────────────────
+    // CLEAN USER COOLDOWN > 30 DAYS
+    //───────────────────────────────────────────
     cleanOldCooldowns() {
-        const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
-        const currentTime = Date.now();
-        let cleanedCount = 0;
-        
-        for (const [senderId, lastTime] of config.USER_COOLDOWNS.entries()) {
-            if (currentTime - lastTime > ONE_MONTH_MS) {
-                config.USER_COOLDOWNS.delete(senderId);
-                cleanedCount++;
+        const MAX_AGE = 30 * 24 * 60 * 60 * 1000;
+        const now = Date.now();
+        let removed = 0;
+
+        for (const [user, time] of config.USER_COOLDOWNS.entries()) {
+            if (now - time > MAX_AGE) {
+                config.USER_COOLDOWNS.delete(user);
+                removed++;
             }
         }
-        
-        if (cleanedCount > 0) {
+
+        if (removed > 0) {
             saveCooldowns(config.USER_COOLDOWNS);
-            console.log(`[Disk] Pembersihan Cooldown selesai. Dihapus: ${cleanedCount} entri.`);
+            console.log(`Cooldown dibersihkan: ${removed} user.`);
         }
     }
 
