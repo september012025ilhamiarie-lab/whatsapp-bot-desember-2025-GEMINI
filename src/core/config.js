@@ -30,24 +30,35 @@ module.exports = {
     // BOT FEATURES
     // ===========================================================
 
-    // Reject incoming calls
+    // Auto-reject incoming calls from WA Web
     REJECT_CALLS: bool(process.env.BOT_REJECT_CALLS, true),
 
-    // Cooldown (used by callHandler)
+    // Cooldown for call-handler
     COOLDOWN_IN_MINUTES: num(process.env.BOT_COOLDOWN_MINUTES, 1),
 
-    // Cooldown Seconds (used by messageHandler)
+    // Cooldown for message-handler
     COOLDOWN_SECONDS: num(process.env.BOT_COOLDOWN_SECONDS, 3),
 
 
     // ===========================================================
-    // PUPPETEER (STEALTH MODE) – WA Web Anti-Detect Settings
+    // OUTBOX QUEUE SYSTEM
+    // ===========================================================
+    OUTBOX_BATCH_LIMIT: num(process.env.OUTBOX_BATCH_LIMIT, 20),     // max pesan sekali proses
+    OUTBOX_INTERVAL_MS: num(process.env.OUTBOX_INTERVAL_MS, 2000),   // jeda antar batch
+
+    // Delay antar pesan (anti-ban)
+    MIN_DELAY_MS: num(process.env.MIN_DELAY_MS, 900),
+    MAX_DELAY_MS: num(process.env.MAX_DELAY_MS, 3000),
+
+    MAX_RETRIES: num(process.env.MAX_RETRIES, 3),    // retry jika kirim gagal
+
+
+    // ===========================================================
+    // PUPPETEER (STEALTH MODE) – Anti-Detect WhatsApp 2025
     // ===========================================================
     PUPPETEER_CONFIG: {
-        // "new" mode = Chrome headless baru (lebih cepat & aman)
         headless: bool(process.env.PUPPETEER_HEADLESS, true) ? "new" : false,
 
-        // Optional Chrome path (jika ingin pakai Chrome custom)
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
 
         args: [
@@ -59,17 +70,23 @@ module.exports = {
             "--disable-infobars",
             "--disable-gpu",
 
-            // Stealth Mode Anti-Detect (WA 2024–2025)
+            // Stealth Mode Anti WA Detect (2024–2025)
             "--disable-blink-features=AutomationControlled",
             "--disable-blink-features=AutomationControlled,AutomationControlledFrame",
             "--disable-features=IsolateOrigins,site-per-process",
+            "--disable-web-security",
 
-            // Optimized performance
+            // Optimized Performance
             "--window-size=1280,720",
             "--start-maximized",
             "--single-process",
             "--renderer-process-limit=1",
             '--js-flags="--max_old_space_size=256"',
+
+            // Reduce Fingerprint entropy
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-breakpad",
         ],
     },
 };

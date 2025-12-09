@@ -1,13 +1,14 @@
 // ====================================================================
 // humanHelpers.js — FINAL 2025 VERSION
-// Human-like typing, randomized delay, cooldown persistence
+// src/utils/humanHelpers.js
+// Human-like typing, randomized delay, cooldown persistence, anti-ban
 // ====================================================================
 
 const fs = require('fs');
 const path = require('path');
 
 // ---------------------------------------------------------------
-// Persistent Cooldown (Saved to disk every 5 seconds max)
+// Persistent Cooldown (Saved to disk)
 // ---------------------------------------------------------------
 const COOLDOWN_FILE_PATH = path.join('data', 'cooldowns.json');
 
@@ -19,7 +20,7 @@ let cooldownTimer = null;
 const DEBOUNCE_DELAY_MS = 5000;
 
 // ---------------------------------------------------------------
-// BASIC TIME UTILITIES
+// BASIC UTILITIES
 // ---------------------------------------------------------------
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -29,17 +30,17 @@ function jitter(min = 200, max = 600) {
     return Math.floor(Math.random() * (max - min + 1) + min);
 }
 
-// Human-like random delay based on time of day
+// Delay manusia (di-adjust berdasarkan jam aktivitas manusia)
 async function humanDelay(min = 700, max = 2200) {
     const hr = new Date().getHours();
 
-    // 00:00 – 06:00 → manusia ngantuk: lebih lambat
+    // 00:00 – 06:00 → manusia ngantuk = delay lebih lama
     if (hr >= 0 && hr <= 6) {
         min *= 1.4;
         max *= 1.6;
     }
 
-    // jam sibuk: 07–10 & 17–20 → sedikit lebih cepat
+    // Jam sibuk 07–10 & 17–20 → delay lebih cepat
     if ((hr >= 7 && hr <= 10) || (hr >= 17 && hr <= 20)) {
         min *= 0.85;
         max *= 0.85;
@@ -51,32 +52,34 @@ async function humanDelay(min = 700, max = 2200) {
 // ---------------------------------------------------------------
 // REALISTIC TYPING SIMULATION — SAFE FOR WA WEB 2025
 // ---------------------------------------------------------------
-async function simulateTyping(client, chatId, text = "", totalDuration = 1600) {
+async function simulateTyping(client, chatId, text = "", totalDuration = 1500) {
     try {
-        // 30% waktu: tidak typing sama sekali (lebih natural)
+        // Natural behavior: 30% pesan dikirim tanpa typing
         if (Math.random() < 0.30) return;
 
-        // 60% waktu → "online" dulu
+        // 60% peluang tampil sebagai online
         if (Math.random() < 0.60) {
             try { await client.sendPresenceAvailable(); } catch {}
         }
 
+        // Start typing
         await client.sendPresenceUpdate("composing", chatId);
 
-        const chars = text?.length || 10;
+        const chars = text?.length || 12;
 
-        // Kecepatan per karakter (30–70ms)
-        const perChar = jitter(30, 70);
+        // kecepatan per karakter
+        const perChar = jitter(35, 75);
         let duration = perChar * chars;
 
-        // Batas aman
+        // Natural cap
         duration = Math.min(
-            Math.max(duration, totalDuration * 0.7),
-            totalDuration * 1.4
+            Math.max(duration, totalDuration * 0.6),
+            totalDuration * 1.5
         );
 
         await sleep(duration);
 
+        // Stop typing
         await client.sendPresenceUpdate("paused", chatId);
 
     } catch (err) {
@@ -94,6 +97,7 @@ function loadCooldowns() {
     try {
         const raw = fs.readFileSync(COOLDOWN_FILE_PATH, 'utf8');
         const parsed = JSON.parse(raw);
+
         return new Map(Object.entries(parsed));
     } catch (e) {
         console.error("Cooldown load error:", e.message);
@@ -104,7 +108,11 @@ function loadCooldowns() {
 function writeCooldownsToDisk(map) {
     try {
         const obj = Object.fromEntries(map);
-        fs.writeFileSync(COOLDOWN_FILE_PATH, JSON.stringify(obj, null, 2), 'utf8');
+        fs.writeFileSync(
+            COOLDOWN_FILE_PATH,
+            JSON.stringify(obj, null, 2),
+            'utf8'
+        );
         console.log("[Disk] Cooldowns saved.");
     } catch (e) {
         console.error("Cooldown save error:", e.message);

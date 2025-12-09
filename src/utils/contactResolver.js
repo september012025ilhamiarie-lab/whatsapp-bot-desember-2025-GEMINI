@@ -1,63 +1,68 @@
-/**
- * CONTACT RESOLVER – Persistent JSON Edition 2025
- * Full LID compatible + anti-spam getContactLidAndPhone
- * Auto cache to disk + verbose logging (console.info)
- */
+// ====================================================================
+// CONTACT RESOLVER – FINAL 2025
+// Fully LID compatible + Safe getContactLidAndPhone()
+// Persistent Disk Cache + Sanitized JID + Fallback Contact
+// Compatible with whatsapp-web.js 2025
+// ====================================================================
 
 const fs = require("fs");
 const path = require("path");
 
 const CACHE_FILE = path.join(__dirname, "../../data/contactCache.json");
 
+// Internal in-memory cache
 let cache = {
-    pnByLid: {},         // "xxxxx@lid" → "628xxx@c.us"
-    lidByPn: {},         // "628xxx@c.us" → "xxxxx@lid"
-    contactByPn: {}      // "628xxx@c.us" → contact object (wwebjs)
+    pnByLid: {},        // LID → phone JID (c.us)
+    lidByPn: {},        // phone JID → LID
+    contactByPn: {}     // phone JID → contact object
 };
 
-// ─────────────────────────────────────
-//  Load Cache from JSON
-// ─────────────────────────────────────
+// ====================================================================
+// LOAD CACHE ON STARTUP
+// ====================================================================
 (function loadCache() {
     try {
         if (fs.existsSync(CACHE_FILE)) {
             const raw = fs.readFileSync(CACHE_FILE, "utf8");
             cache = JSON.parse(raw);
-            console.info("📂 Contact Cache loaded:", CACHE_FILE);
+            console.info("📂 Contact Cache Loaded:", CACHE_FILE);
         } else {
-            console.info("📂 No existing contact cache file, starting fresh");
+            console.info("📂 No cache found — starting fresh");
         }
-    } catch (err) {
-        console.error("⚠️ Failed to load cache:", err.message);
+    } catch (e) {
+        console.error("⚠️ Failed to load contact cache:", e.message);
     }
 })();
 
-// ─────────────────────────────────────
-//  Save Cache to Disk
-// ─────────────────────────────────────
+// ====================================================================
+// SAVE CACHE
+// ====================================================================
 function flushCache() {
     try {
         fs.writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2));
-        console.info("💾 Contact Cache saved:", CACHE_FILE);
-    } catch (err) {
-        console.error("⚠️ Failed to save cache:", err.message);
+        console.info("💾 Contact Cache Saved:", CACHE_FILE);
+    } catch (e) {
+        console.error("⚠️ Failed to save cache:", e.message);
     }
 }
 
-// ─────────────────────────────────────
-//  sanitize JID
-// ─────────────────────────────────────
+// ====================================================================
+// SANITIZE JID to xxx@c.us (never LID)
+// ====================================================================
 function sanitizeJid(jid) {
     if (!jid) return null;
+
     const raw = typeof jid === "string" ? jid : jid._serialized;
-    return raw.replace(/[@:].*$/, "") + "@c.us";
+    const num = raw.split("@")[0].replace(/[^0-9]/g, "");
+
+    return num + "@c.us";
 }
 
-// ─────────────────────────────────────
-//  fallback contact
-// ─────────────────────────────────────
+// ====================================================================
+// FALLBACK CONTACT (if WA server fetch fails)
+// ====================================================================
 function fallbackContact(jid) {
-    console.info(`⚠️ Returning Fallback Contact for ${jid}`);
+    console.warn(`⚠️ Using fallback contact: ${jid}`);
     return {
         id: { _serialized: jid },
         number: jid.split("@")[0],
@@ -66,98 +71,116 @@ function fallbackContact(jid) {
     };
 }
 
-// ─────────────────────────────────────
-//  MAIN — resolveContact()
-// ─────────────────────────────────────
+// ====================================================================
+// MAIN RESOLVER
+// ====================================================================
 async function resolveContact(client, rawJid) {
-    console.info(`\n🔍 resolveContact() called → rawJid = ${rawJid}`);
-    
-    try {
-        let jid = rawJid.includes("@") ? rawJid : rawJid + "@c.us";
-        console.info(`➡️ Normalized jid = ${jid}`);
+    console.info(`\n🔍 resolveContact() → rawJid: ${rawJid}`);
 
-        // Group / broadcast
-        if (jid.endsWith("@g.us") || jid.endsWith("@broadcast")|| jid.endsWith("@newsletter")) {
-            console.info("🔸 Group/Broadcast/newsletter detected → skipping resolver");
+    try {
+        // Normalize to JID
+        let jid = rawJid.includes("@") ? rawJid : rawJid + "@c.us";
+        jid = jid.toLowerCase();
+
+        console.info(`➡️ Normalized JID: ${jid}`);
+
+        // Skip group / broadcast / newsletter
+        if (
+            jid.endsWith("@g.us") ||
+            jid.endsWith("@broadcast") ||
+            jid.endsWith("@newsletter")
+        ) {
+            console.info("🔸 Skipping resolver (group/broadcast/newsletter)");
             return fallbackContact(jid);
         }
 
-        // ────────────────────────
-        // 1. LID → PN resolution
-        // ────────────────────────
-        const isLid = jid.includes("@lid") || jid.includes("@s.whatsapp.net");
+        // ============================================================
+        // 1. LID → phone JID resolution
+        // ============================================================
+        const isLid =
+            jid.includes("@lid") ||
+            jid.includes("@s.whatsapp.net") ||
+            jid.match(/[0-9]+:[0-9]+@/);
 
         if (isLid) {
-            console.info("🔍 JID is LID type:", jid);
+            console.info("🔍 JID is LID:", jid);
 
+            // check cache
             if (cache.pnByLid[jid]) {
-                console.info(`✔️ LID found in cache: ${jid} → ${cache.pnByLid[jid]}`);
-                jid = cache.pnByLid[jid];
+                const pn = cache.pnByLid[jid];
+                console.info(`✔️ LID cache hit → ${jid} → ${pn}`);
+                jid = pn;
             } else {
-                console.info("🌐 Resolving LID via WhatsApp getContactLidAndPhone()");
+                console.info("🌐 Resolving LID from WA server...");
+
                 try {
                     const res = await client.getContactLidAndPhone([jid]);
+                    const info = res?.[0];
 
-                    console.info("📥 Result from WA:", res);
+                    console.info("📥 LID Resolver Response:", info);
 
-                    if (res && res[0] && res[0].pn) {
-                        const pn = res[0].pn;
-                        cache.pnByLid[jid] = pn;
-                        cache.lidByPn[pn] = jid;
+                    if (info?.pn) {
+                        // pn always xxx@c.us
+                        cache.pnByLid[jid] = info.pn;
+                        cache.lidByPn[info.pn] = jid;
+
                         flushCache();
-                        console.info(`🔄 LID resolved ${jid} → ${pn}`);
-                        jid = pn;
+
+                        console.info(`🔄 LID resolved → ${jid} → ${info.pn}`);
+                        jid = info.pn;
                     } else {
-                        console.warn("⚠️ LID resolved but phone not detected");
+                        console.warn("⚠️ LID resolved but phone missing");
                     }
-                } catch (err) {
-                    console.warn("⚠️ LID Resolver error:", err.message);
+                } catch (e) {
+                    console.warn("⚠️ LID resolver failed:", e.message);
                 }
             }
         }
 
+        // force sanitize
         const pn = sanitizeJid(jid);
-        console.info(`➡️ Final PN processed = ${pn}`);
+        console.info(`➡️ Final PN = ${pn}`);
 
-        // ────────────────────────
-        // 2. Contact cache check
-        // ────────────────────────
+        // ============================================================
+        // 2. Check contact cache
+        // ============================================================
         if (cache.contactByPn[pn]) {
-            console.info(`📌 Contact found in cache for ${pn}`);
+            console.info(`📌 Contact cache hit for ${pn}`);
             return cache.contactByPn[pn];
         }
 
-        // ────────────────────────
-        // 3. Fetch via wwebjs
-        // ────────────────────────
-        console.info("🌐 Fetching contact via WhatsApp API (1st time)");
+        // ============================================================
+        // 3. Fetch from WA server
+        // ============================================================
+        console.info("🌐 Fetching contact from WA server...");
+
         let contact = null;
-
-        // try safe metadata load (ignore errors)
-        try { await client.isRegisteredUser(wid); } catch {}
-        try { await client.getProfilePicUrl(wid); } catch {}
-
 
         try {
             contact = await client.getContactById(pn);
-            console.info("📥 Contact from WA:", contact?.number || contact?.pushname || "OK (no extra details)");
-        } catch (err) {
-            console.warn("⚠️ Failed to fetch contact from WA:", err.message);
+            console.info(
+                "📥 WA Contact:",
+                contact?.pushname || contact?.number || "OK"
+            );
+        } catch (e) {
+            console.warn("⚠️ WA fetch error:", e.message);
         }
 
         if (!contact) {
-            console.warn("⚠️ Fetch failed → using fallback contact");
+            console.warn("⚠️ WA fetch failed → using fallback");
             contact = fallbackContact(pn);
         }
 
+        // ensure metadata exists
         if (!contact.number) {
             contact.number = pn.split("@")[0];
         }
 
-        // store contact permanently
+        // save to cache
         cache.contactByPn[pn] = contact;
         flushCache();
-        console.info(`💾 Contact saved to cache for ${pn}`);
+
+        console.info(`💾 Saved contact to cache: ${pn}`);
 
         return contact;
 

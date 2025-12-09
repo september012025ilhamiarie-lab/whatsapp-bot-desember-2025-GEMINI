@@ -1,11 +1,16 @@
+// ====================================================================
+// WhatsAppBot.js — FINAL 2025 VERSION
 // src/core/WhatsAppBot.js
+// Modular, Anti-Ban Ready, Auto-Inject MessageService
+// ====================================================================
+
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
 const fs = require("fs");
 const path = require("path");
 
 const config = require("./config");
-const { saveCooldowns } = require("../utils/humanHelpers");
+const antiBan = require("../utils/humanHelpers");
 const autoPresenceLoop = require("../utils/presenceLoop");
 
 const MessageService = require("../service/messageService");
@@ -17,83 +22,97 @@ const {
 } = require('../handlers/messageHandler');
 
 class WhatsAppBot {
+
     constructor() {
         this.presenceStarted = false;
 
+        // ---------------------------------------------------------------
+        // CLIENT SETTINGS — Aman & Stabil
+        // ---------------------------------------------------------------
         this.client = new Client({
             authStrategy: new LocalAuth(),
             puppeteer: config.PUPPETEER_CONFIG,
 
-            // Added for WA stability
+            // stabilisasi WA Web 2025
             restartOnAuthFail: true,
             takeoverOnConflict: true,
             takeoverTimeoutMs: 3000,
+
+            // dapat ditambah jika butuh stealth
+            // webVersionCache: { type: "remote", remotePath: "…" }
         });
 
-        this.messageService = new MessageService(this.client);
+        // ---------------------------------------------------------------
+        // AUTO-INJECT MessageService dengan antiBan
+        // ---------------------------------------------------------------
+        this.messageService = new MessageService(this.client, {
+            antiBan,
+            minDelay: 1000,
+            maxDelay: 3000,
+            maxRetries: 2
+        });
     }
 
+    // -----------------------------------------------------------------
+    // EVENT SETUP
+    // -----------------------------------------------------------------
     setupEvents() {
-        // QR Code
+        // QR LOGIN
         this.client.on("qr", this.handleQr);
 
-        // Basic session
+        // session-primary
         this.client.on("ready", this.handleReady.bind(this));
         this.client.on("auth_failure", this.handleAuthFailure.bind(this));
         this.client.on("disconnected", this.handleDisconnect.bind(this));
 
-        // Incoming actions
-        this.client.on("message", async (msg) => {
-            await enhancedMessageHandler(this.client, msg, this.messageService);
-        });
+        // handle incoming chat messages
+        this.client.on('message', (msg) => enhancedMessageHandler(this.client, msg, this.messageService));
 
-        //🔥 New WA API for call events
-       this.client.on("call", (call) => handleCall(this.client, call));
+        // Call Event
+        this.client.on("call", (call) => handleCall(this.client, call));
     }
 
-    //───────────────────────────────────────────
+    // -----------------------------------------------------------------
     // QR HANDLER
-    //───────────────────────────────────────────
+    // -----------------------------------------------------------------
     handleQr(qr) {
-        console.log("SCAN QR UNTUK LOGIN WHATSAPP:");
+        console.log("⚡ SCAN QR UNTUK LOGIN WHATSAPP:");
         qrcode.generate(qr, { small: true });
     }
 
-    //───────────────────────────────────────────
-    // READY HANDLER
-    //───────────────────────────────────────────
+    // -----------------------------------------------------------------
+    // READY
+    // -----------------------------------------------------------------
     handleReady() {
-        console.log("READY — sukses tersambung ke WhatsApp.");
+        console.log("✅ READY — WhatsApp terhubung.");
 
         this.cleanOldCooldowns();
 
-        // 🔥 Prevent multiple presence loop
+        // Hindari multiple presence loop
         if (!this.presenceStarted) {
             this.presenceStarted = true;
 
-            autoPresenceLoop(this.client).catch((e) =>
-                console.error("autoPresenceLoop crashed:", e)
-            );
+            autoPresenceLoop(this.client)
+                .catch(e => console.error("autoPresenceLoop crash:", e));
         }
     }
 
-    //───────────────────────────────────────────
-    // HANDLE DISCONNECT
-    //───────────────────────────────────────────
+    // -----------------------------------------------------------------
+    // DISCONNECT HANDLER
+    // -----------------------------------------------------------------
     handleDisconnect(reason) {
         console.log("⚠️ WhatsApp DISCONNECTED:", reason);
 
-        // WA sometimes reconnects itself automatically
-        // Wait 3 seconds, then attempt re-init
+        // WhatsApp biasanya reconnect otomatis — tunggu 3 detik
         setTimeout(() => {
-            console.log("Mencoba reconnect WhatsApp...");
+            console.log("🔄 Mencoba reconnect WhatsApp...");
             this.client.initialize();
         }, 3000);
     }
 
-    //───────────────────────────────────────────
-    // HANDLE AUTH FAILURE
-    //───────────────────────────────────────────
+    // -----------------------------------------------------------------
+    // AUTH FAILURE
+    // -----------------------------------------------------------------
     handleAuthFailure(reason) {
         console.error("🚨 AUTENTIKASI GAGAL:", reason);
 
@@ -107,7 +126,7 @@ class WhatsAppBot {
             if (fs.existsSync(profileDir))
                 fs.rmSync(profileDir, { recursive: true, force: true });
 
-            console.log("Folder sesi dihapus. Restart agar login ulang.");
+            console.log("🔥 Folder sesi dihapus — restart untuk login ulang.");
         } catch (err) {
             console.error("Gagal hapus folder sesi:", err);
         }
@@ -115,9 +134,9 @@ class WhatsAppBot {
         setTimeout(() => process.exit(1), 2000);
     }
 
-    //───────────────────────────────────────────
-    // CLEAN USER COOLDOWN > 30 DAYS
-    //───────────────────────────────────────────
+    // -----------------------------------------------------------------
+    // CLEAN COOLDOWN FILE > 30 DAYS
+    // -----------------------------------------------------------------
     cleanOldCooldowns() {
         const MAX_AGE = 30 * 24 * 60 * 60 * 1000;
         const now = Date.now();
@@ -131,11 +150,14 @@ class WhatsAppBot {
         }
 
         if (removed > 0) {
-            saveCooldowns(config.USER_COOLDOWNS);
-            console.log(`Cooldown dibersihkan: ${removed} user.`);
+            antiBan.saveCooldowns(config.USER_COOLDOWNS);
+            console.log(`🧹 Cooldown dibersihkan: ${removed} user.`);
         }
     }
 
+    // -----------------------------------------------------------------
+    // INITIALIZE
+    // -----------------------------------------------------------------
     initialize() {
         this.setupEvents();
         this.client.initialize();
