@@ -14,3 +14,6 @@
 
 # Log PM2
 /logs
+
+# data 
+/data

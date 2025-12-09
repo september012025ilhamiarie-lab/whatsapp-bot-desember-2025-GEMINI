@@ -6,12 +6,17 @@
   "scripts": {
     "start": "node index.js"
   },
-  "keywords": ["whatsapp", "bot", "wwebjs", "pm2"],
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "wwebjs",
+    "pm2"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "dotenv": "^16.4.5",
+    "dotenv": "^16.6.1",
     "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.23.0"
+    "whatsapp-web.js": "github:pedroslopez/whatsapp-web.js#main"
   }
 }

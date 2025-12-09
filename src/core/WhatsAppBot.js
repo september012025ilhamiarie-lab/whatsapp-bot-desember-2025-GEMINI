@@ -38,7 +38,7 @@ class WhatsAppBot {
         this.client.on("message", (msg) => handleMessage(this.client, msg));
 
         //🔥 New WA API for call events
-        this.client.on("incoming_call", (call) => handleCall(this.client, call));
+       this.client.on("call", (call) => handleCall(this.client, call));
     }
 
     //───────────────────────────────────────────

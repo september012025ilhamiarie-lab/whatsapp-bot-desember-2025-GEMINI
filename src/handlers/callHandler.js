@@ -1,82 +1,108 @@
-// src/handlers/callHandler.js
-const resolveContact = require('../utils/contactResolver');
+// ===============================================================
+//  CALL HANDLER – FINAL 2025 EDITION
+//  Fully compatible with WWebJS Multi-Device + LID Resolver
+//  Reject Call Safely + Send Auto Reply + Humanized Behavior
+// ===============================================================
+
+const { resolveContact, sanitizeJid } = require('../utils/contactResolver');
 const { humanDelay, simulateTyping } = require('../utils/humanHelpers');
 const config = require('../core/config');
 
-const callCooldown = new Map();  
-const typingLocks = new Map();   
+// Runtime memory (tidak disimpan ke disk)
+const callCooldown = new Map();
+const typingLocks = new Map();
 
 module.exports = async function (client, call) {
     try {
+        // ─────────────────────────────────────────────
+        // 0. Feature toggle
+        // ─────────────────────────────────────────────
         if (!config.REJECT_CALLS) return;
-
+        console.info("\n\n\n=======ADA PANGGILAN MASUK========\n");
+        console.info(call);
+        
         const sender = call.from;
         const now = Date.now();
 
         // ─────────────────────────────────────────────
-        // 1. Reject Call (humanize sedikit)
+        // 1. REJECT CALL (tidak mendadak)
         // ─────────────────────────────────────────────
         try {
-            await humanDelay(300, 1200);  // reject tidak instan
+            console.info("Akan menjalankan reject call");
+            await humanDelay(300, 1300); // agak natural
+
             if (typeof call.reject === "function") {
                 await call.reject();
             } else if (client.rejectCall) {
                 await client.rejectCall(call.id);
             }
-        } catch (e) {
-            console.warn("⚠️ reject call gagal:", e.message);
+        } catch (err) {
+            console.warn("⚠️ Reject call gagal:", err.message);
         }
 
         // ─────────────────────────────────────────────
-        // 2. Cooldown anti-spam (per JID 45–90 detik)
+        // 2. PER-JID CALL COOLDOWN (45–90 detik default)
         // ─────────────────────────────────────────────
+        console.info("Akan menjalankan callCooldown");
         const last = callCooldown.get(sender);
-        const COOLDOWN = (config.COOLDOWN_IN_MINUTES * 60000) || 45000;
+        const cdMinutes = config.COOLDOWN_IN_MINUTES || 1;
+        const COOLDOWN_MS = cdMinutes * 60000;
 
-        if (last && now - last < COOLDOWN) {
-            return; // jangan spam balik user
+        if (last && now - last < COOLDOWN_MS) {
+            console.info("akan return jangan spam reply");
+            return; // jangan spam reply
         }
         callCooldown.set(sender, now);
 
         // ─────────────────────────────────────────────
-        // 3. Resolve Contact (fix LID → c.us)
+        // 3. RESOLVE CONTACT + FIX LID → @c.us
         // ─────────────────────────────────────────────
+        console.info("akan resolve tujuan "+sender);
         const resolved = await resolveContact(client, sender);
+        console.info(">>> RESOLVE CONTACT: ");
+        console.info(resolved);
+        
         if (!resolved) return;
+        console.info("akan kirim pesan ke tujuan "+resolved.number);
+        const jid = sanitizeJid(resolved.id);
+        const number = resolved.number; // 628xxxx
+        const name = resolved.pushname || number;
 
-        const jid = resolved.id?._serialized;
-        const number = resolved.number;
-        const name = resolved.pushname || resolved.name || number;
+        if (!jid) {
+            console.warn("❌ Invalid JID on call handler:", sender);
+            return;
+        }
 
         // ─────────────────────────────────────────────
-        // 4. Build reply
+        // 4. AUTO-REPLY MESSAGE
         // ─────────────────────────────────────────────
         const reply =
-            `Halo @${number} (${name}), ` +
-            `nomor ini tidak bisa menerima panggilan ya 🙏\n` +
-            `Silakan kirim chat saja.`;
+            `Halo Kak @${number} (${name}), ` +
+            `nomor ini *tidak bisa menerima panggilan* ya 🙏\n` +
+            `Silakan kirim chat saja agar bisa kami balas.`;
+
 
         // ─────────────────────────────────────────────
-        // 5. Typing lock (anti double reply)
+        // 5. TYPING LOCK (hindari double reply)
         // ─────────────────────────────────────────────
         if (typingLocks.get(jid)) return;
         typingLocks.set(jid, true);
 
         try {
             // ─────────────────────────────────────────
-            // 6. Simulate typing sebelum kirim
+            // 6. TYPING SIMULATION
             // ─────────────────────────────────────────
-            await humanDelay(900, 2300);
-            const typeTime = Math.min(2500, Math.max(900, reply.length * 30));
+            await humanDelay(900, 2400);
+            const typeTime = Math.min(2600, Math.max(900, reply.length * 30));
             await simulateTyping(client, jid, reply, typeTime);
 
-            await humanDelay(300, 1200);
+            await humanDelay(300, 900);
 
             // ─────────────────────────────────────────
-            // 7. Kirim pesan + MENTION CONTACT (bukan JID!)
+            // 7. SEND MESSAGE (mentions MUST be string)
             // ─────────────────────────────────────────
             await client.sendMessage(jid, reply, {
-                mentions: [resolved] // FIX: WAJIB pakai contact
+                mentions: [ sanitizeJid(jid) ]
             });
 
         } finally {

@@ -1,2 +1,27 @@
+install dulu:
 1. npm install dotenv
+2. npm i whatsapp-web.js
+3. npm install github:pedroslopez/whatsapp-web.js#main
+
+3. npm install qrcode-terminal
+4. npm install -g pm2
+
+cara jalnakan 
+node index.js
+
+
+
+CARA MENJALANKAN DI BACKGROUND (PM2)
+pm2 start ecosystem.config.js
+pm2 ls (cek status)
+pm2 logs (cek log)
+
+
+RESET QR (Jika mau login ulang)
+rm -rf .wwebjs_auth
+rm -rf chrome_profile
+node index.js
+
+
+
 

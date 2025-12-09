@@ -1,13 +1,26 @@
-// src/utils/humanHelpers.js
+// ====================================================================
+// humanHelpers.js — FINAL 2025 VERSION
+// Human-like typing, randomized delay, cooldown persistence
+// ====================================================================
+
 const fs = require('fs');
 const path = require('path');
 
+// ---------------------------------------------------------------
+// Persistent Cooldown (Saved to disk every 5 seconds max)
+// ---------------------------------------------------------------
 const COOLDOWN_FILE_PATH = path.join('data', 'cooldowns.json');
-if (!fs.existsSync('data')) fs.mkdirSync('data');
 
-// ─────────────────────────────────────────────
-// BASIC TIME UTILS
-// ─────────────────────────────────────────────
+if (!fs.existsSync('data')) {
+    fs.mkdirSync('data');
+}
+
+let cooldownTimer = null;
+const DEBOUNCE_DELAY_MS = 5000;
+
+// ---------------------------------------------------------------
+// BASIC TIME UTILITIES
+// ---------------------------------------------------------------
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -16,50 +29,54 @@ function jitter(min = 200, max = 600) {
     return Math.floor(Math.random() * (max - min + 1) + min);
 }
 
-function humanDelay(min = 700, max = 2200) {
+// Human-like random delay based on time of day
+async function humanDelay(min = 700, max = 2200) {
     const hr = new Date().getHours();
 
-    // malam → respons lebih lambat
+    // 00:00 – 06:00 → manusia ngantuk: lebih lambat
     if (hr >= 0 && hr <= 6) {
-        min *= 1.3; 
-        max *= 1.4;
+        min *= 1.4;
+        max *= 1.6;
     }
 
-    // jam sibuk → respons sedikit cepat
+    // jam sibuk: 07–10 & 17–20 → sedikit lebih cepat
     if ((hr >= 7 && hr <= 10) || (hr >= 17 && hr <= 20)) {
-        min *= 0.8; 
-        max *= 0.9;
+        min *= 0.85;
+        max *= 0.85;
     }
 
-    const d = jitter(min, max);
-    return sleep(d);
+    await sleep(jitter(min, max));
 }
 
-// ─────────────────────────────────────────────
-// REALISTIC TYPING SIMULATION – SAFE FOR 2025
-// ─────────────────────────────────────────────
-
-async function simulateTyping(client, chatId, text = "", duration = 1400) {
+// ---------------------------------------------------------------
+// REALISTIC TYPING SIMULATION — SAFE FOR WA WEB 2025
+// ---------------------------------------------------------------
+async function simulateTyping(client, chatId, text = "", totalDuration = 1600) {
     try {
-        // 💡 30% waktu: tidak typing sama sekali (lebih manusiawi)
+        // 30% waktu: tidak typing sama sekali (lebih natural)
         if (Math.random() < 0.30) return;
 
-        // 💡 Online indicator: bukan selalu available
+        // 60% waktu → "online" dulu
         if (Math.random() < 0.60) {
             try { await client.sendPresenceAvailable(); } catch {}
         }
 
-        // Start typing
         await client.sendPresenceUpdate("composing", chatId);
 
-        // Durasi typing tidak dihitung per karakter, tetapi random
-        const minT = duration * 0.7;
-        const maxT = duration * 1.3;
-        const typingTime = jitter(minT, maxT);
+        const chars = text?.length || 10;
 
-        await sleep(typingTime);
+        // Kecepatan per karakter (30–70ms)
+        const perChar = jitter(30, 70);
+        let duration = perChar * chars;
 
-        // Pause typing
+        // Batas aman
+        duration = Math.min(
+            Math.max(duration, totalDuration * 0.7),
+            totalDuration * 1.4
+        );
+
+        await sleep(duration);
+
         await client.sendPresenceUpdate("paused", chatId);
 
     } catch (err) {
@@ -68,41 +85,43 @@ async function simulateTyping(client, chatId, text = "", duration = 1400) {
     }
 }
 
-// ─────────────────────────────────────────────
-// PERSISTENT COOLDOWN (ONLY USER COOLDOWN!)
-// ─────────────────────────────────────────────
-
-let cooldownTimer = null;
-const DEBOUNCE = 5000;
-
+// ---------------------------------------------------------------
+// PERSISTENT USER COOLDOWN (DEBOUNCED DISK WRITE)
+// ---------------------------------------------------------------
 function loadCooldowns() {
+    if (!fs.existsSync(COOLDOWN_FILE_PATH)) return new Map();
+
     try {
-        if (!fs.existsSync(COOLDOWN_FILE_PATH)) return new Map();
-        const data = fs.readFileSync(COOLDOWN_FILE_PATH, "utf8");
-        const obj = JSON.parse(data);
-        return new Map(Object.entries(obj));
-    } catch {
+        const raw = fs.readFileSync(COOLDOWN_FILE_PATH, 'utf8');
+        const parsed = JSON.parse(raw);
+        return new Map(Object.entries(parsed));
+    } catch (e) {
+        console.error("Cooldown load error:", e.message);
         return new Map();
     }
 }
 
-function writeCooldowns(cool) {
+function writeCooldownsToDisk(map) {
     try {
-        const obj = Object.fromEntries(cool);
-        fs.writeFileSync(COOLDOWN_FILE_PATH, JSON.stringify(obj, null, 2));
+        const obj = Object.fromEntries(map);
+        fs.writeFileSync(COOLDOWN_FILE_PATH, JSON.stringify(obj, null, 2), 'utf8');
+        console.log("[Disk] Cooldowns saved.");
     } catch (e) {
         console.error("Cooldown save error:", e.message);
     }
 }
 
-function saveCooldowns(cool) {
-    if (cooldownTimer) clearTimeout(cooldownTimer);
+function saveCooldowns(map) {
+    if (cooldownTimer) {
+        clearTimeout(cooldownTimer);
+    }
     cooldownTimer = setTimeout(() => {
-        writeCooldowns(cool);
+        writeCooldownsToDisk(map);
         cooldownTimer = null;
-    }, DEBOUNCE);
+    }, DEBOUNCE_DELAY_MS);
 }
 
+// ---------------------------------------------------------------
 module.exports = {
     sleep,
     jitter,
