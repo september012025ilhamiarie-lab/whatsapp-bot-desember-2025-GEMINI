@@ -7,6 +7,8 @@
 # WhatsApp Web.js Session Files
 # Folder yang menyimpan sesi login WhatsApp Anda
 /.wwebjs_auth
+/.wwebjs_cache
+
 
 # Puppeteer/Chrome Profile Data
 # Cache dan data browser yang besar
@@ -17,3 +19,4 @@
 
 # data 
 /data
+
