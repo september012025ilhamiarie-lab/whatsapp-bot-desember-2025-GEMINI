@@ -15,7 +15,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "dateformat": "^4.5.1",
     "dotenv": "^16.6.1",
+    "mssql": "^3.3.0",
     "qrcode-terminal": "^0.12.0",
     "whatsapp-web.js": "github:pedroslopez/whatsapp-web.js#main"
   }

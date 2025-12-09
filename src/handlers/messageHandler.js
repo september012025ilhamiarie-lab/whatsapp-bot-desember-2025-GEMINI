@@ -11,7 +11,7 @@ const { humanDelay, simulateTyping } = require('../utils/humanHelpers');
 const messageCooldown = new Map();
 const typingLocks = new Map();
 
-module.exports = async function (client, msg) {
+async function legacyMessageHandler (client, msg) {
 
     try {
 
@@ -67,7 +67,7 @@ module.exports = async function (client, msg) {
 
         const jid = sanitizeJid(contact.id);       // ALWAYS string @c.us
         const number = contact.number;             // "628xxxx"
-        console.log("\n\n\n=======NILAI JID:  "+jid+"=========\n\n");
+        console.log("\n\n\n=======NILAI JID:  " + jid + "=========\n\n");
 
         let pushname = null;
         if (contact.pushname && contact.pushname.trim() !== "") {
@@ -90,44 +90,102 @@ module.exports = async function (client, msg) {
             `Pesan kamu sudah diterima.\n` +
             `Ini balasan otomatis dari bot 😊`;
 
-        // ─────────────────────────────────────────────
-        // 6. TYPING LOCK (hindari flood typing)
-        // ─────────────────────────────────────────────
-        if (typingLocks.get(jid)) return;
-        typingLocks.set(jid, true);
 
-        try {
-            // ─────────────────────────────────────────
-            // 7. HUMAN-LIKE TYPING
-            // ─────────────────────────────────────────
-            await humanDelay(700, 1800);
 
-            const typingTime = Math.min(2800, Math.max(850, reply.length * 27));
-            await simulateTyping(client, jid, reply, typingTime);
+        // // ─────────────────────────────────────────────
+        // // 6. TYPING LOCK (hindari flood typing)
+        // // ─────────────────────────────────────────────
+        // if (typingLocks.get(jid)) return;
+        // typingLocks.set(jid, true);
 
-            await humanDelay(280, 750);
+        // try {
+        //     // ─────────────────────────────────────────
+        //     // 7. HUMAN-LIKE TYPING
+        //     // ─────────────────────────────────────────
+        //     await humanDelay(700, 1800);
 
-            // ─────────────────────────────────────────
-            // 8. SEND REPLY
-            //    Notes:
-            //    - Mentions MUST be string array
-            //    - using sanitizeJid to avoid crash
-            // ─────────────────────────────────────────
+        //     const typingTime = Math.min(2800, Math.max(850, reply.length * 27));
+        //     await simulateTyping(client, jid, reply, typingTime);
 
-            //await client.sendMessage(jid, reply);
+        //     await humanDelay(280, 750);
 
-            await client.sendMessage(jid, reply, {
-                quotedMessageId: "false_" + jid + "_" + idPesan,
-                mentions: [ jid ]
-            });
+        //     // ─────────────────────────────────────────
+        //     // 8. SEND REPLY
+        //     //    Notes:
+        //     //    - Mentions MUST be string array
+        //     //    - using sanitizeJid to avoid crash
+        //     // ─────────────────────────────────────────
 
-        } finally {
-            typingLocks.delete(jid);
-        }
+        //     //await client.sendMessage(jid, reply);
+
+        //     await client.sendMessage(jid, reply, {
+        //         quotedMessageId: "false_" + jid + "_" + idPesan,
+        //         mentions: [jid]
+        //     });
+
+        // } finally {
+        //     typingLocks.delete(jid);
+        // }
 
     } catch (err) {
         console.error("❌ message handler error:", err);
     }
 };
+
+
+async function enhancedMessageHandler(client, msg, messageService) {
+    try {
+        console.log("\n===== [ENHANCED HANDLER] PESAN MASUK =====");
+        console.log("[DARI]:", msg.from);
+        console.log("[ISI ]:", msg.body);
+
+        if (!msg || !msg.from || msg.fromMe) return;
+
+        const sender = msg.from;
+        const now = Date.now();
+
+        // anti spam
+        const randomCooldown = 1400 + Math.floor(Math.random() * 1600);
+        const last = messageCooldown.get(sender);
+        if (last && now - last < randomCooldown) return;
+        messageCooldown.set(sender, now);
+
+        // resolve JID
+        const contact = await resolveContact(client, sender);
+        if (!contact) return;
+
+        const jid = sanitizeJid(contact.id);
+        const number = contact.number;
+
+        // =============================================
+        // PANGGIL FUNGSI-FUNGSI BARU
+        // =============================================
+
+        await messageService.sendText(jid, "Halo! Pesan kamu saya terima.");
+        await messageService.sendReaction(msg, "👍");
+
+        // contoh quoted
+        // await messageService.sendTextQuoted(jid, "Ini quoted", msg);
+
+        // contoh push ke database
+        // await messageService.saveInbox(jid, msg.body);
+
+    } catch (err) {
+        console.error("❌ enhanced handler error:", err);
+    }
+}
+
+
+
+// ====================================================================
+// 3) EXPORT MODE GANDA
+// ====================================================================
+// WhatsAppBot boleh pilih handler mana yg mau dipakai
+
+module.exports = {
+    legacyMessageHandler,     // handler lama
+    enhancedMessageHandler    // handler baru (pakai messageService)
+};
+
 
 

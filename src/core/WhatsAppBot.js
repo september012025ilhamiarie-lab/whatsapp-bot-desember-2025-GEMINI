@@ -7,8 +7,14 @@ const path = require("path");
 const config = require("./config");
 const { saveCooldowns } = require("../utils/humanHelpers");
 const autoPresenceLoop = require("../utils/presenceLoop");
-const handleMessage = require("../handlers/messageHandler");
+
+const MessageService = require("../service/messageService");
 const handleCall = require("../handlers/callHandler");
+
+const {
+    legacyMessageHandler,
+    enhancedMessageHandler
+} = require('../handlers/messageHandler');
 
 class WhatsAppBot {
     constructor() {
@@ -23,6 +29,8 @@ class WhatsAppBot {
             takeoverOnConflict: true,
             takeoverTimeoutMs: 3000,
         });
+
+        this.messageService = new MessageService(this.client);
     }
 
     setupEvents() {
@@ -35,7 +43,9 @@ class WhatsAppBot {
         this.client.on("disconnected", this.handleDisconnect.bind(this));
 
         // Incoming actions
-        this.client.on("message", (msg) => handleMessage(this.client, msg));
+        this.client.on("message", async (msg) => {
+            await enhancedMessageHandler(this.client, msg, this.messageService);
+        });
 
         //🔥 New WA API for call events
        this.client.on("call", (call) => handleCall(this.client, call));
