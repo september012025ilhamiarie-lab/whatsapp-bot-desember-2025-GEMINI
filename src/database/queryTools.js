@@ -1,38 +1,49 @@
 // src/database/queryTools.js
-const { getPool, sql } = require("./sqlServer");
+const { getPool } = require("./sqlServer");
 
-const blue = "\x1b[34m";
-const yellow = "\x1b[33m";
-const red = "\x1b[31m";
-const reset = "\x1b[0m";
+module.exports = {
+    async runQuery(query) {
+        const pool = await getPool();
+        if (!pool) {
+            console.error("[SQL] runQuery → Pool is null, query tidak dijalankan");
+            return null;
+        }
 
-async function runQuery(query, params = {}) {
-    const pool = await getPool();
-    const request = pool.request();
+        try {
+            console.log("[SQL] 🔹 Mengirim query ke SQL Server...");
+            console.log("[SQL] Query:", query);
 
-    // Log parameter binding
-    console.log(blue, "[SQL] Preparing query...", reset);
-    console.log(blue, "QUERY:", query, reset);
+            const result = await pool.request().query(query);
 
-    if (Object.keys(params).length > 0) {
-        console.log(yellow, "[SQL] Params:", params, reset);
+            if (!result) {
+                console.warn("[SQL] runQuery → Result undefined");
+                return null;
+            }
+
+            console.log("[SQL] ✅ Query selesai, recordset length:", result.recordset?.length || 0);
+            return result.recordset || [];
+        } catch (err) {
+            console.error("[SQL] ❌ Query Error:", err.message);
+            return null;
+        }
+    },
+
+    async runExecute(query) {
+        const pool = await getPool();
+        if (!pool) {
+            console.error("[SQL] runExecute → Pool is null, query tidak dijalankan");
+            return false;
+        }
+
+        try {
+            console.log("[SQL] 🔹 Execute query ke SQL Server...");
+            console.log("[SQL] Query:", query);
+            await pool.request().query(query);
+            console.log("[SQL] ✅ Execute sukses");
+            return true;
+        } catch (err) {
+            console.error("[SQL] ❌ Execute Error:", err.message);
+            return false;
+        }
     }
-
-    for (const key in params) {
-        request.input(key, params[key]);
-    }
-
-    try {
-        const result = await request.query(query);
-
-        console.log(blue, `[SQL] Rows returned: ${result.recordset.length}`, reset);
-
-        return result.recordset;
-
-    } catch (err) {
-        console.error(red, "[SQL] Query Error:", err.message, reset);
-        return null;
-    }
-}
-
-module.exports = { runQuery };
+};

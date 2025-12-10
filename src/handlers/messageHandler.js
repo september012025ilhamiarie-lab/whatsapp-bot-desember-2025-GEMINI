@@ -1,284 +1,225 @@
-// src/handlers/messageHandler.js
 // ====================================================================
-// MESSAGE HANDLER — FINAL 2025 EDITION
-// - Enhanced + Legacy handlers
-// - LID resolver, anti-ban behaviour, detailed logs
+// MessageHandler.js — 2025 QUEUE-BASED OPTIMIZED
+// - Single query pengirim per pesan
+// - Resolusi LID → nomor HP
+// - Filter grup / broadcast / status / newsletter
+// - Fast path @c.us
+// - Queue + cooldown + typing simulation
+// - Cek pesan terlambat (>2 menit)
 // ====================================================================
 
 const { resolveContact, sanitizeJid } = require('../utils/contactResolver');
-const { humanDelay, simulateTyping } = require('../utils/humanHelpers');
+const { insertInbox } = require('../database/repo/inboxRepo');
+const { getPengirimByNomor } = require('../database/repo/pengirimRepo');
 const config = require('../core/config');
 
-// runtime maps
+// Runtime maps
 const messageCooldown = new Map();   // per JID anti-spam
 const typingLocks = new Map();       // per JID typing lock
 
-// --------------------------------------------------------------------
-// Helper: normalize/ensure JID to usable form (xxx@c.us or group @g.us)
-// --------------------------------------------------------------------
-function normalizeToChatJid(raw) {
+// ================================================================
+// Normalize → convert any raw inbound JID to @c.us or @g.us
+// ================================================================
+function normalizeJid(raw) {
     if (!raw) return null;
     const s = String(raw).toLowerCase();
-
-    // already a normal chat JID
     if (s.endsWith('@c.us') || s.endsWith('@g.us')) return s;
-
-    // LID-ish → extract digits and return as @c.us
-    const num = s.split('@')[0].replace(/\D/g, '');
-    if (num.length >= 6) return `${num}@c.us`;
-
-    // fallback
-    return s;
+    const digits = s.split('@')[0].replace(/\D/g, '');
+    return digits.length >= 6 ? digits + '@c.us' : s;
 }
 
-// --------------------------------------------------------------------
-// Legacy handler (keamanan backward-compatibility).
-// Keep minimal but useful logging; won't auto-save unless messageService provided.
-// --------------------------------------------------------------------
-async function legacyMessageHandler(client, msg, messageService = null) {
+// ================================================================
+// Safe Typing Simulation
+// ================================================================
+async function safeTyping(client, jid, sample = '') {
     try {
-        console.info('\n[LEGACY HANDLER] Triggered for', msg.from);
-
-        // Basic filters (same as enhanced)
-        if (!msg || !msg.from) return;
-        const remote = msg?.id?.remote || msg.from || '';
-        if (!remote.endsWith('@c.us') && !remote.endsWith('@g.us') && !remote.endsWith('@lid')) {
-            console.warn('[LEGACY] Ignored non-chat remote:', remote);
-            return;
-        }
-
-        // Resolve contact (handle @lid)
-        let resolved;
-        try {
-            resolved = await resolveContact(client, msg.from);
-            console.info('[LEGACY] resolveContact ->', resolved?.id?._serialized || 'none');
-        } catch (e) {
-            console.warn('[LEGACY] resolveContact failed:', e?.message || e);
-        }
-
-        const jid = sanitizeJid(resolved?.id || msg.from) || normalizeToChatJid(msg.from);
-        const text = msg.body?.trim() || '';
-
-        console.info(`[LEGACY] JID=${jid} text="${text}"`);
-
-        // Optional: persist inbox if messageService provides saveInbox()
-        if (messageService && typeof messageService.saveInbox === 'function') {
-            try {
-                console.info('[LEGACY] Saving to inbox via messageService.saveInbox()');
-                await messageService.saveInbox(jid, text, msg);
-                // react if possible
-                if (typeof messageService.sendReaction === 'function') {
-                    messageService.sendReaction(msg, '👍');
-                } else if (typeof msg.react === 'function') {
-                    try { await msg.react('👍'); } catch {}
-                }
-                console.info('[LEGACY] saved -> reacted thumbs up');
-            } catch (e) {
-                console.warn('[LEGACY] saveInbox failed:', e?.message || e);
-            }
-        }
-
-        // Minimal auto-reply (safe) — only if explicitly available on messageService
-        if (messageService && typeof messageService.sendText === 'function') {
-            // Example: short ack
-            try {
-                await humanDelay(400, 1000);
-                // simulate short typing but only if simulateTyping available
-                try { await simulateTyping(client, jid, 'Sedang membalas...'); } catch {}
-                messageService.sendText(jid, 'Terima kasih, pesan Anda sudah kami terima.');
-            } catch (e) {
-                console.warn('[LEGACY] auto-reply failed:', e?.message || e);
-            }
-        }
-
-    } catch (err) {
-        console.error('[LEGACY] handler error:', err);
-    }
+        await client.sendPresenceUpdate('composing', jid);
+        const ms = 400 + Math.min(1500, (sample.length || 10) * 50);
+        await new Promise(r => setTimeout(r, ms));
+        await client.sendPresenceUpdate('paused', jid);
+    } catch (_) {}
 }
 
-// --------------------------------------------------------------------
-// ENHANCED handler — final production-grade message handler
-// - call with (client, msg, messageService)
-// --------------------------------------------------------------------
-async function enhancedMessageHandler(client, msg, messageService, options = {}) {
-    console.info('\n────────────────────────────────────────────────────');
-    console.info('📩 ENHANCED MESSAGE HANDLER TRIGGERED');
-
-    // quick raw dump for debug — keep it concise in prod if noisy
-    console.debug('RAW MESSAGE:', msg && { id: msg?.id?._serialized, from: msg?.from, body: msg?.body, isStatus: msg?.isStatus });
-
-    // Sanity
-    if (!msg || !msg.from) {
-        console.warn('[ENHANCED] invalid msg object, skipping.');
-        return;
+// ================================================================
+// Handle delayed messages (> thresholdMs)
+// - Mengembalikan { delayed: boolean, dataPengirim: object|null }
+// - Lengkap dengan console.log untuk debug
+// ================================================================
+async function handleDelayedMessage(msg, messageService, thresholdMs = 2 * 60 * 1000) {
+    if (!msg?.timestamp) {
+        console.log("⚠️ handleDelayedMessage → Pesan tidak memiliki timestamp, diabaikan");
+        return { delayed: false, dataPengirim: null };
     }
 
-    // Remote filter — ignore status/broadcast/newsletter etc.
-    const remote = msg?.id?.remote || msg.from || '';
-    console.info('[ENHANCED] remote:', remote);
-
-    if (!remote.endsWith('@c.us') && !remote.endsWith('@g.us') && !remote.endsWith('@lid')) {
-        console.warn('[ENHANCED] Ignored non-chat remote:', remote);
-        return;
-    }
-
-    // Resolve contact (handles @lid -> @c.us)
-    let resolved;
-    try {
-        resolved = await resolveContact(client, msg.from);
-        console.info('[ENHANCED] resolveContact =>', resolved?.id?._serialized || 'fallback');
-    } catch (e) {
-        console.warn('[ENHANCED] resolveContact failed:', e?.message || e);
-    }
-
-    const jid = sanitizeJid(resolved?.id || msg.from) || normalizeToChatJid(msg.from);
-    const number = (resolved && resolved.number) || jid.split('@')[0];
-    const pushname = (resolved && resolved.pushname) || msg.notifyName || null;
-    const isGroup = !!msg.isGroup;
-    const text = (msg.body || '').toString().trim();
-
-    console.info(`[ENHANCED] Processed: jid=${jid} number=${number} pushname=${pushname} isGroup=${isGroup}`);
-    console.info(`[ENHANCED] Body: "${text}"`);
-
-    // Anti-spam (per-jid) — randomized cooldown window
+    const msgTimestampMs = msg.timestamp * 1000; // WA timestamp → ms
     const now = Date.now();
-    const last = messageCooldown.get(jid);
-    const baseMin = 1400, baseMax = 3000;
-    const randomCooldown = baseMin + Math.floor(Math.random() * (baseMax - baseMin + 1));
+    const delay = now - msgTimestampMs;
 
-    if (last && now - last < randomCooldown) {
-        console.info(`[ENHANCED] Cooldown active for ${jid} (${now - last}ms < ${randomCooldown}ms). Skipping.`);
-        return;
-    }
-    messageCooldown.set(jid, now);
+    console.log(`ℹ️ handleDelayedMessage → Pesan timestamp: ${msgTimestampMs} (${new Date(msgTimestampMs).toLocaleString()})`);
+    console.log(`ℹ️ handleDelayedMessage → Sekarang: ${now} (${new Date(now).toLocaleString()})`);
+    console.log(`ℹ️ handleDelayedMessage → Delay pesan: ${delay} ms`);
 
-    // Typing lock (avoid double replies concurrently)
-    if (typingLocks.get(jid)) {
-        console.info('[ENHANCED] Typing lock active for', jid, '→ skipping to avoid double reply.');
-        return;
+    const number = (msg.from || '').replace('@c.us', '');
+    if (!number) {
+        console.log("⚠️ handleDelayedMessage → Nomor pengirim tidak valid, diabaikan");
+        return { delayed: false, dataPengirim: null };
     }
 
-    // Choose antiBan helpers (from options or messageService or fallback)
-    const antiBan = options.antiBan || messageService?.options?.antiBan || {
-        humanDelay: async (min = 500, max = 1200) => { await new Promise(r => setTimeout(r, min + Math.random() * (max - min))); },
-        simulateTyping: async () => {},
-        sleep: async (ms) => new Promise(r => setTimeout(r, ms))
-    };
+    console.log(`ℹ️ handleDelayedMessage → Nomor pengirim: +${number}`);
 
-    // short helper to safely simulate typing via provided helper or wwebjs fallback
-    async function safeSimulateTypingHelper(clientRef, destJid, textSample = '') {
-        try {
-            if (typeof antiBan.simulateTyping === 'function') {
-                await antiBan.simulateTyping(clientRef, destJid, textSample);
-            } else {
-                // best-effort fallback using client presence update
-                try { await clientRef.sendPresenceAvailable(); } catch {}
-                try { await clientRef.sendPresenceUpdate('composing', destJid); } catch {}
-                await new Promise(r => setTimeout(r, Math.min(1000, (textSample?.length || 10) * 30)));
-                try { await clientRef.sendPresenceUpdate('paused', destJid); } catch {}
-            }
-        } catch (e) {
-            console.warn('[ENHANCED] safeSimulateTyping failed:', e?.message || e);
+    let dataPengirim = null;
+    try {
+        dataPengirim = await getPengirimByNomor(number);
+        if (dataPengirim) {
+            console.log(`✔ handleDelayedMessage → Nomor +${number} terdaftar: ${dataPengirim.nama} (${dataPengirim.kode_reseller})`);
+        } else {
+            console.log(`⚠️ handleDelayedMessage → Nomor +${number} tidak ditemukan di tabel pengirim`);
         }
+    } catch (err) {
+        console.log(`❌ handleDelayedMessage → Error saat query getPengirimByNomor: ${err.message}`);
     }
+
+    if (delay > thresholdMs) {
+        console.log(`⚠️ handleDelayedMessage → Pesan terlambat (> ${thresholdMs} ms)`);
+        if (dataPengirim && messageService?.sendText) {
+            const preview = (msg.body || '').slice(0, 20);
+            await messageService.sendText(msg.from,
+                `Kak ${dataPengirim.nama} '${dataPengirim.kode_reseller}', isi pesan "${preview}" tidak dapat diproses, terlambat masuk (lebih dari 2 menit). Mohon kirim ulang ya. Mohon maaf sebelumnya.`
+            );
+            console.log(`ℹ️ handleDelayedMessage → Balasan pesan terlambat dikirim ke +${number}`);
+        } else {
+            console.log(`⚠️ handleDelayedMessage → Tidak dapat kirim balasan, nomor tidak terdaftar atau messageService tidak tersedia`);
+        }
+        return { delayed: true, dataPengirim };
+    }
+
+    console.log(`ℹ️ handleDelayedMessage → Pesan masih baru, delay ${delay} ms`);
+    return { delayed: false, dataPengirim };
+}
+
+// ================================================================
+// Enhanced Message Handler (queue-based, single-query)
+// ================================================================
+async function enhancedMessageHandler(client, msg, messageService) {
+    console.log("\n──────────────────────────────────────────────");
+    console.log("📩 MESSAGE HANDLER FINAL (QUEUE-BASED)");
+    
+
+    if (!msg || !msg.from) return;
+
+    let remote = msg?.id?.remote || msg.from;
+
+    // ================================================================
+    // 1. QUICK IGNORE: broadcast / status / newsletter
+    // ================================================================
+    if (
+        remote.endsWith('@g.us') ||
+        remote.endsWith('@broadcast') ||
+        remote.endsWith('@status') ||
+        remote.endsWith('@newsletter')
+    ) {
+        console.log("Ignored '"+remote+"' because is group/broadcast/status/newsletter message.");
+        return;
+    }
+
+    console.log("📩 PESAN MASUK");
+    console.log(msg);
+
+    // ================================================================
+    // 2. RESOLVE CONTACT
+    //    - Jika @lid → resolve
+    //    - Jika @c.us → fast-path
+    // ================================================================
+    let resolved = null;
+    try {
+        resolved = await resolveContact(client, remote);
+    } catch (_) {}
+
+    const finalJid = sanitizeJid(resolved?.id) || normalizeJid(remote);
+
+    // ================================================================
+    // 3. FILTER GRUP SETELAH RESOLVE
+    //    - Jika finalJid @g.us → skip
+    // ================================================================
+    if (!finalJid || finalJid.endsWith('@g.us')) {
+        console.log("Ignored group message or unresolved -> skip");
+        return;
+    }
+
+    const number = resolved?.number || finalJid.replace("@c.us", "");
+    const text = (msg.body || '').trim();
+
+    console.log("→ JID:", finalJid, "Num:", number, "Text:", text);
+
+    // ================================================================
+    // 4. COOLDOWN — Anti spam ban (WA 2025)
+    // ================================================================
+    const now = Date.now();
+    const last = messageCooldown.get(finalJid);
+    const cooldown = 1500 + Math.random() * 1200;
+    if (last && now - last < cooldown) {
+        console.log(`Cooldown ${now - last} < ${cooldown} → skip`);
+        return;
+    }
+    messageCooldown.set(finalJid, now);
+
+    // ================================================================
+    // 5. LOCK → cegah double handler
+    // ================================================================
+    if (typingLocks.get(finalJid)) {
+        console.log("Handler lock active → skip");
+        return;
+    }
+    typingLocks.set(finalJid, true);
 
     try {
-        // ignore group spam prefix
-        if (isGroup && text.startsWith('.')) {
-            console.warn('[ENHANCED] Ignored group spam prefix for', jid);
+        // ================================================================
+        // 6. CEK pesan terlambat + ambil dataPengirim
+        // ================================================================
+        const { delayed, dataPengirim } = await handleDelayedMessage(msg, messageService);
+
+        if (delayed) return; // pesan terlambat sudah di-handle
+        if (!dataPengirim) {
+            console.log(`❌ Nomor +${number} tidak terdaftar → abaikan pesan`);
             return;
         }
 
-        // lock typing for this JID
-        typingLocks.set(jid, true);
+        console.log(`✔ Nomor +${number} terdaftar di Pengirim: Reseller ${dataPengirim.nama} (${dataPengirim.kode_reseller})`);
 
-        // --- Commands & matches (add more here) ---
-        const tl = text.toLowerCase();
+        // ================================================================
+        // 7. BUAT ID pengirim untuk reply
+        // ================================================================
+        const idPesan = msg?.id?.id;
+        const idPengirim = idPesan
+            ? `${number}@${config.AKHIRAN_WHATSAPP_KE_OUTBOX}#${idPesan}`
+            : `${number}@${config.AKHIRAN_WHATSAPP_KE_OUTBOX}`;
 
-        // Command: !menu
-        if (tl === '!menu') {
-            console.info('[ENHANCED] Command !menu detected for', jid);
+        // ================================================================
+        // 8. INSERT INBOX
+        // ================================================================
+        await insertInbox({
+            kodeReseller: dataPengirim.kode_reseller,
+            pengirim: idPengirim,
+            pesan: text
+        });
+        console.log("✔ INSERT inbox berhasil:", idPengirim);
 
-            await antiBan.humanDelay(350, 1200);
-            await safeSimulateTypingHelper(client, jid, 'Sedang mengetik...');
-
-            if (messageService && typeof messageService.sendText === 'function') {
-                messageService.sendText(jid,
-                    '📌 *Menu Bot*\n' +
-                    '1. Status\n' +
-                    '2. Bantuan\n' +
-                    'Ketik nomor untuk pilihan.'
-                );
-                console.info('[ENHANCED] Sent !menu response via messageService');
-            } else {
-                // fallback raw send (best-effort)
-                try {
-                    await client.sendMessage(jid, '📌 Menu Bot\n1. Status\n2. Bantuan');
-                    console.info('[ENHANCED] Sent !menu response via client.sendMessage (fallback)');
-                } catch (e) {
-                    console.warn('[ENHANCED] fallback send failed:', e?.message || e);
-                }
-            }
-
-            return;
+        // ================================================================
+        // 9. REACT 👍 sebagai tanda "pesan diproses"
+        // ================================================================
+        if (messageService?.sendReaction) {
+            messageService.sendReaction(msg, "👍");
         }
 
-        // Greeting fuzzy: hi / hai / halo / hali / holla etc. (simple fuzzy)
-        if (/^(hi+|hai+|halo+|hallo+|hali|holla|hey+|helo+)\b/i.test(text)) {
-            console.info('[ENHANCED] Greeting detected for', jid);
-
-            await antiBan.humanDelay(400, 1000);
-            await safeSimulateTypingHelper(client, jid, 'Halo…');
-
-            if (messageService && typeof messageService.sendText === 'function') {
-                messageService.sendText(jid, `Halo @${number} ${pushname ? `(${pushname})` : ''} 👋\nPesan kamu sudah diterima. Kami akan membalas secepatnya.`);
-                console.info('[ENHANCED] Sent greeting reply via messageService');
-            } else {
-                try {
-                    await client.sendMessage(jid, `Halo ${pushname || ''} 👋 Pesan kamu sudah diterima.`);
-                    console.info('[ENHANCED] Sent greeting reply via client.sendMessage (fallback)');
-                } catch (e) {
-                    console.warn('[ENHANCED] fallback greeting send failed:', e?.message || e);
-                }
-            }
-
-            // optional: save inbox (if messageService supports)
-            if (messageService && typeof messageService.saveInbox === 'function') {
-                try {
-                    await messageService.saveInbox(jid, text, msg);
-                    console.info('[ENHANCED] messageService.saveInbox succeeded');
-                    // react via messageService if available
-                    if (typeof messageService.sendReaction === 'function') {
-                        messageService.sendReaction(msg, '👍');
-                    } else if (typeof msg.react === 'function') {
-                        try { await msg.react('👍'); } catch {}
-                    }
-                } catch (e) {
-                    console.warn('[ENHANCED] saveInbox failed:', e?.message || e);
-                }
-            }
-
-            return;
-        }
-
-        // If nothing matched → forward to legacy handler (safe fallback)
-        console.info('[ENHANCED] No enhanced match — forwarding to legacy handler');
-        await legacyMessageHandler(client, msg, messageService);
+       
 
     } catch (err) {
-        console.error('[ENHANCED] handler error:', err);
+        console.log("❌ Handler error:", err.message);
     } finally {
-        // release lock
-        typingLocks.delete(jid);
-        console.info('[ENHANCED] completed for', jid);
-        console.info('────────────────────────────────────────────────────\n');
+        typingLocks.delete(finalJid);
+        console.log("✔ Handler selesai:", finalJid);
+        console.log("──────────────────────────────────────────────\n");
     }
 }
 
-// --------------------------------------------------------------------
-// export both handlers (WhatsAppBot can choose which to wire)
-// --------------------------------------------------------------------
-module.exports = {
-    legacyMessageHandler,
-    enhancedMessageHandler
-};
+module.exports = { enhancedMessageHandler };

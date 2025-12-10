@@ -4,7 +4,7 @@ install dulu:
 3. npm install github:pedroslopez/whatsapp-web.js#main
 
 3. npm install qrcode-terminal
-4. npm i mssql@3.3.0
+4. npm i mssql@9.3.2
 5. npm i dateformat@4.5.1
 
 6. npm install -g pm2
