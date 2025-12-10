@@ -1,19 +1,15 @@
 // index.js
-require('dotenv').config(); // Muat variabel environment
+require('dotenv').config();
 const WhatsAppBot = require('./src/core/WhatsAppBot');
 
-// === GLOBAL SAFETY HANDLERS ===
 process.on("unhandledRejection", (reason, promise) => {
     console.error("🔥 Unhandled Rejection:", reason);
 });
 
 process.on("uncaughtException", (err) => {
     console.error("🔥 Uncaught Exception:", err);
-    // optional: exit to let PM2 restart
-    // process.exit(1);
 });
 
-// === GRACEFUL SHUTDOWN ===
 process.on("SIGINT", () => {
     console.log("⚠️ SIGINT diterima. Menutup bot...");
     process.exit(0);
@@ -24,13 +20,21 @@ process.on("SIGTERM", () => {
     process.exit(0);
 });
 
-// === BOT STARTUP WRAPPER ===
+// --- BOT STARTUP WRAPPER ---
 async function main() {
     try {
         console.log("🚀 Starting WhatsApp Bot...");
         const bot = new WhatsAppBot();
-        await bot.initialize();
-        console.log("✅ WhatsApp Bot Berhasil Dijalankan");
+
+        console.log("[index.js] Initializing bot...");
+        bot.initialize(); // tidak perlu await karena client.initialize() async
+
+        // Tunggu ready event untuk menandakan bot siap
+        bot.client.on("ready", () => {
+            console.log("✅ WhatsApp Bot Berhasil Dijalankan dan siap!");
+            console.log("[index.js] OutboxHandler status:", bot.outboxHandler.isRunning ? "Running" : "Stopped");
+        });
+
     } catch (err) {
         console.error("❌ Gagal memulai bot:", err);
         process.exit(1);

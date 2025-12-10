@@ -11,7 +11,7 @@ module.exports = {
 
         try {
             console.log("[SQL] 🔹 Mengirim query ke SQL Server...");
-            console.log("[SQL] Query:", query);
+            //console.log("[SQL] Query:", query);
 
             const result = await pool.request().query(query);
 

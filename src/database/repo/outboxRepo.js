@@ -1,8 +1,13 @@
+// ====================================================================
+//  OUTBOX REPO
+//  /src/database/repo/outboxRepo.js
+// ====================================================================
+
 // src/database/repo/outboxRepo.js
 const { runQuery, runExecute } = require("../queryTools");
 const { getSqlDateFormat } = require("../../helper/dateTools");
 
-const { AKHIRAN_WHATSAPP_KE_OUTBOX } = require("../../config");
+const { AKHIRAN_WHATSAPP_KE_OUTBOX } = require("../../core/config");
 
 async function updateStatusOutbox(kode, status) {
     const now = getSqlDateFormat(new Date());
@@ -30,31 +35,49 @@ async function updateStatusOutboxAddOnWA(kode, status, pengirim_outbox) {
     return await runExecute(query);
 }
 
-async function getOutboxData() {
-    const query =
-        "SELECT TOP (5) " +
-        "dbo.outbox.kode, " +
-        "dbo.outbox.kode_reseller, " +
-        "dbo.reseller.nama, " +
-        "dbo.outbox.tgl_entri, " +
-        "dbo.outbox.penerima, " +
-        "dbo.outbox.tipe_penerima, " +
-        "dbo.outbox.pesan, " +
-        "dbo.outbox.tgl_status, " +
-        "dbo.outbox.status " +
-        "FROM dbo.outbox " +
-        "INNER JOIN dbo.reseller ON dbo.outbox.kode_reseller = dbo.reseller.kode " +
-        "WHERE (dbo.outbox.status = 0) " +
-        "AND (dbo.outbox.tipe_penerima = 'Y') " +
-        "AND ((dbo.outbox.penerima LIKE '%@" + AKHIRAN_WHATSAPP_KE_OUTBOX + "') " +
-        "OR (dbo.outbox.penerima LIKE '%@" + AKHIRAN_WHATSAPP_KE_OUTBOX + "%')) " +
-        "ORDER BY dbo.outbox.tgl_entri";
+async function getOutboxData(limit = 5) {
+    const query = `
+        SELECT TOP (${limit})
+            o.kode,
+            o.kode_reseller,
+            r.nama,
+            o.tgl_entri,
+            o.penerima,
+            o.tipe_penerima,
+            o.pesan,
+            o.tgl_status,
+            o.status
+        FROM dbo.outbox AS o
+        INNER JOIN dbo.reseller AS r 
+            ON o.kode_reseller = r.kode
+        WHERE 
+            o.status = 0
+            AND o.tipe_penerima = 'Y'
+            AND (
+                o.penerima LIKE '%@${AKHIRAN_WHATSAPP_KE_OUTBOX}'
+                OR o.penerima LIKE '%@${AKHIRAN_WHATSAPP_KE_OUTBOX}%'
+            )
+        ORDER BY o.tgl_entri;
+    `;
 
-    return await runQuery(query);
+    return runQuery(query);
+}
+
+
+async function markAsFailed(kode) {
+    const now = getSqlDateFormat(new Date());
+    const query = `
+        UPDATE outbox SET
+            tgl_status = CONVERT(DATETIME, '${now}', 102),
+            status = 3
+        WHERE kode = ${kode};
+    `;
+    return runExecute(query);
 }
 
 module.exports = {
     getOutboxData,
+    updateStatusOutboxAddOnWA,
     updateStatusOutbox,
-    updateStatusOutboxAddOnWA
+    markAsFailed
 };

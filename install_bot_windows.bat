@@ -26,18 +26,28 @@ echo [3/6] Installing whatsapp-web.js...
 npm install whatsapp-web.js
 
 echo.
-echo [4/6] Installing qrcode-terminal...
-npm install qrcode-terminal
+echo [4/6] Installing mssql...
+npm install mssql@9.3.2
+
 
 echo.
-echo [5/6] Creating required folders...
+echo [5/6] Installing qrcode-terminal...
+npm install qrcode-terminal
+
+
+echo.
+echo [6/6] Installing dateformat...
+npm install dateformat@4.5.1
+
+echo.
+echo [7/6] Creating required folders...
 if not exist data mkdir data
 if not exist logs mkdir logs
 
 echo Folder siap.
 
 echo.
-echo [6/6] Install PM2? (y/n)
+echo [8/6] Install PM2? (y/n)
 set /p pm2choice=">> "
 
 if /I "%pm2choice%"=="y" (

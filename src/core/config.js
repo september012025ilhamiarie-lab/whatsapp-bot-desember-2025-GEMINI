@@ -27,6 +27,17 @@ function num(val, def = 0) {
 module.exports = {
 
     // ===========================================================
+    // OUTBOX QUEUE SYSTEM (ULTRA SAFE)
+    // ===========================================================
+    OUTBOX_BATCH_LIMIT: num(process.env.OUTBOX_BATCH_LIMIT, 20),
+    OUTBOX_INTERVAL_MS: num(process.env.OUTBOX_INTERVAL_MS, 2000),
+
+    MIN_DELAY_MS: num(process.env.MIN_DELAY_MS, 1200),
+    MAX_DELAY_MS: num(process.env.MAX_DELAY_MS, 3500),
+
+    MAX_RETRIES: num(process.env.MAX_RETRIES, 3),
+
+    // ===========================================================
     // DATABASE PARAMETERS (Inbox / Outbox)
     // ===========================================================
     PENGIRIM_INBOX_OUTBOX:
@@ -50,19 +61,7 @@ module.exports = {
     COOLDOWN_SECONDS: num(process.env.BOT_COOLDOWN_SECONDS, 3),
 
 
-    // ===========================================================
-    // OUTBOX QUEUE SYSTEM
-    // ===========================================================
-    OUTBOX_BATCH_LIMIT: num(process.env.OUTBOX_BATCH_LIMIT, 20),
-    OUTBOX_INTERVAL_MS: num(process.env.OUTBOX_INTERVAL_MS, 2000),
-
-    // Delay AC (Anti Ban)
-    MIN_DELAY_MS: num(process.env.MIN_DELAY_MS, 900),
-    MAX_DELAY_MS: num(process.env.MAX_DELAY_MS, 3000),
-
-    // Retry jika kirim error
-    MAX_RETRIES: num(process.env.MAX_RETRIES, 3),
-
+    
 
     // ===========================================================
     // PUPPETEER STEALTH CONFIG (Anti WA Detect 2025)
@@ -102,4 +101,5 @@ module.exports = {
             "--disable-breakpad",
         ],
     },
+    USER_COOLDOWNS: new Map(),
 };

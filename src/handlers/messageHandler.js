@@ -1,5 +1,6 @@
 // ====================================================================
-// MessageHandler.js — 2025 QUEUE-BASED OPTIMIZED
+// messageHandler.js — 2025 QUEUE-BASED OPTIMIZED
+//  /src/handlers/messageHandler.js 
 // - Single query pengirim per pesan
 // - Resolusi LID → nomor HP
 // - Filter grup / broadcast / status / newsletter
@@ -193,7 +194,10 @@ async function enhancedMessageHandler(client, msg, messageService) {
         const idPengirim = idPesan
             ? `${number}@${config.AKHIRAN_WHATSAPP_KE_OUTBOX}#${idPesan}`
             : `${number}@${config.AKHIRAN_WHATSAPP_KE_OUTBOX}`;
-
+        
+        
+        console.log("AKAN PROSES SIMPAN PESAN KE INBOX");
+        console.log(msg);
         // ================================================================
         // 8. INSERT INBOX
         // ================================================================
